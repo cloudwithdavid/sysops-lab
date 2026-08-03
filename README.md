@@ -66,7 +66,7 @@ Bash utilities for diagnostics, evidence gathering, and repeatable command-line 
 
 Python utilities for API checks, log analysis, and operational automation.
 
-- [`log_summary.py`](tools/python/log_summary.py) — command-line log analysis utility. Accepts a log file, optional case-insensitive keyword filter, and number of repeated patterns to show. Reports total and matching lines, counts severity markers, normalizes timestamps and request/trace IDs to group repeated messages, shows the first and last matching lines, and returns exit codes based on severity findings for use in automation.
+- [`log_summary.py`](tools/python/log_summary.py) — command-line log analysis utility. Accepts a log file, one or more optional case-insensitive keyword filters, and the number of patterns to show. Reports total and matching lines, counts severity markers, surfaces high-severity and repeated message patterns, shows the first and last matching lines, and returns distinct exit codes for automation.
 
 **Planned:**
 

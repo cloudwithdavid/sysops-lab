@@ -5,12 +5,13 @@ log_summary.py
 
 Command-line log summarization utility.
 
-Reads a log file, counts common severity markers, surfaces repeated messages or repeated raw lines, and optionally filters by keyword so support can identify likely error patterns faster than manual scanning.
+Reads a log file, counts common severity markers, surfaces repeated message
+patterns, and optionally filters by one or more keywords.
 
 Examples:
   python log_summary.py logs/app.log
-  python log_summary.py logs/app.log --keyword dependency
-  python log_summary.py logs/app.log --top 10
+  python log_summary.py logs/app.log -k database dependency
+  python log_summary.py logs/app.log -t 10
 """
 
 from __future__ import annotations
@@ -24,14 +25,21 @@ from pathlib import Path
 
 SEVERITIES = ["CRITICAL", "ERROR", "WARN", "WARNING", "INFO", "DEBUG"]
 
+EXIT_WARNING = 1  # One or more warning markers found.
+# argparse uses exit code 2 for malformed command-line usage.
+EXIT_INPUT_ERROR = 3  # Invalid input or execution validation failure.
+EXIT_NO_MATCHES = 4  # No lines matched the selected keyword filters.
+EXIT_HIGH_SEVERITY = 5  # One or more CRITICAL or ERROR markers found.
+
 
 @dataclass
 class LogSummary:
     path: Path
     total_lines: int
     matching_lines: int
-    keyword: str | None
+    keywords: list[str] | None
     severity_counts: dict[str, int]
+    high_severity_patterns: list[tuple[str, int]]
     top_repeated_lines: list[tuple[str, int]]
     first_match: str | None
     last_match: str | None
@@ -51,7 +59,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "-k",
         "--keyword",
-        help="Optional keyword filter. Matching is case-insensitive.",
+        dest="keywords",
+        nargs="+",
+        help=(
+            "Optional case-insensitive keyword filters. "
+            "Lines matching any supplied keyword are included."
+        ),
     )
 
     parser.add_argument(
@@ -59,50 +72,69 @@ def parse_args() -> argparse.Namespace:
         "--top",
         type=int,
         default=5,
-        help="Number of repeated lines to show. Default: 5",
+        help="Number of repeated patterns to show. Default: 5",
     )
 
     return parser.parse_args()
 
 
 def normalize_line(line: str) -> str:
-    """
-    Normalize a log line enough to group obvious repeats without pretending to fully parse every log format.
-    """
     stripped = line.strip()
 
     stripped = re.sub(
-        r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:,\d+)?\s*",
+        r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}"
+        r"(?:[.,]\d+)?(?:Z|[+-]\d{2}:\d{2})?\s*",
         "",
         stripped,
     )
-    stripped = re.sub(r"\brequest_id=[^\s]+", "request_id=<id>", stripped)
-    stripped = re.sub(r"\btrace_id=[^\s]+", "trace_id=<id>", stripped)
+    stripped = re.sub(
+        r"\brequest_id=[^\s]+",
+        "request_id=<id>",
+        stripped,
+    )
+    stripped = re.sub(
+        r"\btrace_id=[^\s]+",
+        "trace_id=<id>",
+        stripped,
+    )
 
     return stripped
 
 
-def line_matches_keyword(line: str, keyword: str | None) -> bool:
-    if keyword is None:
+def line_matches_keywords(line: str, keywords: list[str] | None,) -> bool:
+    if not keywords:
         return True
 
-    return keyword.lower() in line.lower()
+    lower_line = line.lower()
+
+    return any(
+        keyword.lower() in lower_line
+        for keyword in keywords
+    )
+
+
+def line_has_severity(line: str, severity: str) -> bool:
+    return (
+        re.search(
+            rf"\b{re.escape(severity)}\b",
+            line.upper(),
+        )
+        is not None
+    )
 
 
 def count_severities(lines: list[str]) -> dict[str, int]:
     counts = {severity: 0 for severity in SEVERITIES}
 
     for line in lines:
-        upper_line = line.upper()
-
         for severity in SEVERITIES:
-            if re.search(rf"\b{re.escape(severity)}\b", upper_line):
+            if line_has_severity(line, severity):
                 counts[severity] += 1
 
     return counts
 
 
-def summarize_log(path: Path, keyword: str | None, top: int) -> LogSummary:
+def summarize_log(path: Path, keywords: list[str] | None, top: int,) -> LogSummary:
     with path.open("r", encoding="utf-8", errors="replace") as file:
         lines = file.readlines()
 
@@ -111,10 +143,22 @@ def summarize_log(path: Path, keyword: str | None, top: int) -> LogSummary:
     filtered_lines = [
         line.rstrip("\n")
         for line in lines
-        if line_matches_keyword(line, keyword)
+        if line_matches_keywords(line, keywords)
     ]
 
     severity_counts = count_severities(filtered_lines)
+
+    high_severity_counter = Counter(
+        normalize_line(line)
+        for line in filtered_lines
+        if (
+            line_has_severity(line, "ERROR")
+            or line_has_severity(line, "CRITICAL")
+        )
+        and normalize_line(line)
+    )
+
+    high_severity_patterns = high_severity_counter.most_common(top)
 
     normalized_counter = Counter(
         normalize_line(line)
@@ -135,8 +179,9 @@ def summarize_log(path: Path, keyword: str | None, top: int) -> LogSummary:
         path=path,
         total_lines=total_lines,
         matching_lines=len(filtered_lines),
-        keyword=keyword,
+        keywords=keywords,
         severity_counts=severity_counts,
+        high_severity_patterns=high_severity_patterns,
         top_repeated_lines=top_repeated_lines,
         first_match=first_match,
         last_match=last_match,
@@ -148,17 +193,25 @@ def print_summary(summary: LogSummary) -> None:
     print(f"Log file: {summary.path.as_posix()}")
     print(f"Total lines scanned: {summary.total_lines}")
 
-    if summary.keyword:
-        print(f"Keyword filter: {summary.keyword}")
-        print(f"Matching lines: {summary.matching_lines}")
+    if summary.keywords:
+        print("Keyword filters (match any): "+ ", ".join(summary.keywords))
     else:
-        print("Keyword filter: not provided")
-        print(f"Matching lines: {summary.matching_lines}")
+        print("Keyword filters: not provided")
+
+    print(f"Matching lines: {summary.matching_lines}")
 
     print("\n--- Severity Counts ---")
 
     for severity in SEVERITIES:
         print(f"{severity}: {summary.severity_counts[severity]}")
+
+    print("\n--- High-Severity Patterns ---")
+
+    if summary.high_severity_patterns:
+        for line, count in summary.high_severity_patterns:
+            print(f"{count}x {line}")
+    else:
+        print("No ERROR or CRITICAL patterns found.")
 
     print("\n--- Repeated Message Patterns ---")
 
@@ -185,34 +238,37 @@ def main() -> int:
             f"Error: log file does not exist or is not a regular file: {args.path}",
             file=sys.stderr,
         )
-        return 1
+        return EXIT_INPUT_ERROR
 
     if args.top < 1:
-        print("Error: --top must be greater than 0", file=sys.stderr)
-        return 1
+        print(
+            "Error: --top must be greater than 0",
+            file=sys.stderr,
+        )
+        return EXIT_INPUT_ERROR
 
     summary = summarize_log(
         path=args.path,
-        keyword=args.keyword,
+        keywords=args.keywords,
         top=args.top,
     )
 
     print_summary(summary)
 
     if summary.matching_lines == 0:
-        return 1
+        return EXIT_NO_MATCHES
 
     if (
         summary.severity_counts["CRITICAL"] > 0
         or summary.severity_counts["ERROR"] > 0
     ):
-        return 2
+        return EXIT_HIGH_SEVERITY
 
     if (
         summary.severity_counts["WARN"] > 0
         or summary.severity_counts["WARNING"] > 0
     ):
-        return 1
+        return EXIT_WARNING
 
     return 0
 
