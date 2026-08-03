@@ -59,17 +59,18 @@ Primary incident-style scenarios used to practice technical investigation, evide
 
 Bash utilities for diagnostics, evidence gathering, and repeatable command-line investigation.
 
-- [`evidence-collect.sh`](tools/bash/evidence-collect.sh) — reusable first-pass Linux evidence collection. Accepts an optional service name, URL, and/or IP address. Collects host, service, journal, port, routing, and reachability evidence, and writes results to a timestamped file.
-- [`disk-triage.sh`](tools/bash/disk-triage.sh) — first-pass disk usage triage utility. Accepts a target path, usage threshold, and depth value. Reports filesystem usage, flags filesystems above the threshold, shows the target path size and largest entries, and can save results to a timestamped file.
+- [`evidence-collect.sh`](tools/bash/evidence-collect.sh) — reusable Linux evidence collection. Accepts an optional service name, URL, and/or IP address. Collects host, service, journal, port, routing, and reachability evidence, and writes results to a timestamped file.
+- [`disk-triage.sh`](tools/bash/disk-triage.sh) — disk usage triage utility. Accepts a target path, usage threshold, and depth value. Reports filesystem usage, flags filesystems above the threshold, shows the target path size and largest entries, and can save results to a timestamped file.
 
 ### 🐍 Python Scripts
 
 Python utilities for API checks, log analysis, and operational automation.
 
+- [`log_summary.py`](tools/python/log_summary.py) — command-line log analysis utility. Accepts a log file, optional case-insensitive keyword filter, and number of repeated patterns to show. Reports total and matching lines, counts severity markers, normalizes timestamps and request/trace IDs to group repeated messages, shows the first and last matching lines, and returns exit codes based on severity findings for use in automation.
+
 **Planned:**
 
 - `api_health_check.py`
-- `log_summary.py`
 
 ## 🗂️ Repository Structure
 
