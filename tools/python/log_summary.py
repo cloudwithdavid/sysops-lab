@@ -5,8 +5,7 @@ log_summary.py
 
 Command-line log summarization utility.
 
-Reads a log file, counts common severity markers, surfaces repeated message
-patterns, and optionally filters by one or more keywords.
+Reads a log file, reports its size, counts common severity markers, surfaces repeated message patterns, and optionally filters by one or more keywords.
 
 Examples:
   python log_summary.py logs/app.log
@@ -35,9 +34,11 @@ EXIT_HIGH_SEVERITY = 5  # One or more CRITICAL or ERROR markers found.
 @dataclass
 class LogSummary:
     path: Path
+    file_size: int
     total_lines: int
     matching_lines: int
     keywords: list[str] | None
+    unmatched_keywords: list[str]
     severity_counts: dict[str, int]
     high_severity_patterns: list[tuple[str, int]]
     top_repeated_lines: list[tuple[str, int]]
@@ -78,6 +79,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def format_file_size(size_bytes: int) -> str:
+    size = float(size_bytes)
+    units = ("B", "K", "M", "G", "T")
+
+    for unit in units[:-1]:
+        if size < 1024:
+            if unit == "B":
+                return f"{int(size)}{unit}"
+
+            return f"{size:.2f}{unit}"
+
+        size /= 1024
+
+    return f"{size:.2f}{units[-1]}"
+
+
 def normalize_line(line: str) -> str:
     stripped = line.strip()
 
@@ -101,16 +118,38 @@ def normalize_line(line: str) -> str:
     return stripped
 
 
-def line_matches_keywords(line: str, keywords: list[str] | None,) -> bool:
+def line_matches_keyword(line: str, keyword: str) -> bool:
+    return keyword.lower() in line.lower()
+
+
+def line_matches_keywords(
+    line: str,
+    keywords: list[str] | None,
+) -> bool:
     if not keywords:
         return True
 
-    lower_line = line.lower()
-
     return any(
-        keyword.lower() in lower_line
+        line_matches_keyword(line, keyword)
         for keyword in keywords
     )
+
+
+def find_unmatched_keywords(
+    lines: list[str],
+    keywords: list[str] | None,
+) -> list[str]:
+    if not keywords or len(keywords) < 2:
+        return []
+
+    return [
+        keyword
+        for keyword in keywords
+        if not any(
+            line_matches_keyword(line, keyword)
+            for line in lines
+        )
+    ]
 
 
 def line_has_severity(line: str, severity: str) -> bool:
@@ -134,7 +173,13 @@ def count_severities(lines: list[str]) -> dict[str, int]:
     return counts
 
 
-def summarize_log(path: Path, keywords: list[str] | None, top: int,) -> LogSummary:
+def summarize_log(
+    path: Path,
+    keywords: list[str] | None,
+    top: int,
+) -> LogSummary:
+    file_size = path.stat().st_size
+
     with path.open("r", encoding="utf-8", errors="replace") as file:
         lines = file.readlines()
 
@@ -145,6 +190,11 @@ def summarize_log(path: Path, keywords: list[str] | None, top: int,) -> LogSumma
         for line in lines
         if line_matches_keywords(line, keywords)
     ]
+
+    unmatched_keywords = find_unmatched_keywords(
+        lines=lines,
+        keywords=keywords,
+    )
 
     severity_counts = count_severities(filtered_lines)
 
@@ -177,9 +227,11 @@ def summarize_log(path: Path, keywords: list[str] | None, top: int,) -> LogSumma
 
     return LogSummary(
         path=path,
+        file_size=file_size,
         total_lines=total_lines,
         matching_lines=len(filtered_lines),
         keywords=keywords,
+        unmatched_keywords=unmatched_keywords,
         severity_counts=severity_counts,
         high_severity_patterns=high_severity_patterns,
         top_repeated_lines=top_repeated_lines,
@@ -191,14 +243,21 @@ def summarize_log(path: Path, keywords: list[str] | None, top: int,) -> LogSumma
 def print_summary(summary: LogSummary) -> None:
     print("\n--- Log Summary ---")
     print(f"Log file: {summary.path.as_posix()}")
+    print(f"File size: {format_file_size(summary.file_size)}")
     print(f"Total lines scanned: {summary.total_lines}")
 
     if summary.keywords:
-        print("Keyword filters (match any): "+ ", ".join(summary.keywords))
+        print("Keyword filters: " + ", ".join(summary.keywords))
+
+        if summary.unmatched_keywords:
+            print(
+                "No matches for: "
+                + ", ".join(summary.unmatched_keywords)
+            )
+
+        print(f"Matching lines: {summary.matching_lines}")
     else:
         print("Keyword filters: not provided")
-
-    print(f"Matching lines: {summary.matching_lines}")
 
     print("\n--- Severity Counts ---")
 
